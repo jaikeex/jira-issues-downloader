@@ -1,4 +1,5 @@
 from os import link
+from re import T
 import requests
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
@@ -20,7 +21,7 @@ data = {
 }
 
 def get_data_from_jira(dataframe):
-    customers = {""}
+    customers = {"Remote JIRA Sync User (J2J)"}
     issue_keys = {""}
 
     get_user_input()
@@ -106,22 +107,44 @@ def add_summary(customer, dataframe, date, issue_key, summary):
 def get_comments(all_comments, customer):
     comments = []
     for comment in all_comments:
-        comment_author = comment["author"]["displayName"]
-        comment_date = datetime.strptime(comment["created"][:19], "%Y-%m-%dT%H:%M:%S")
-        if comment_author == customer:
-            comments.append({
-                "text":        comment["body"],
-                "date":        comment_date,
-                "author":      comment_author,
-                "author_type": "customer",
-            })
-        else:
-            comments.append({
-                "text":        comment["body"],
-                "date":        comment_date,
-                "author":      comment_author,
-                "author_type": "agent",
-            })
+        comment_text = comment["body"]
+        comment_id = comment["id"]
+
+        basic = HTTPBasicAuth(request_params["username"], request_params["password"])
+        url = request_params["url"] + "/rest/api/2/comment/" + comment_id + "/properties/sd.public.comment"
+        response = requests.get(url, auth=basic)
+        visibility = response.json()
+        print(url)
+        print(visibility)
+
+        ignore_comment = False
+
+        if "value" in visibility:
+            if visibility["value"]["internal"] == True: 
+                ignore_comment = True
+        if "_THIS IS AN INTERNAL IXPERTA COMMENT FOR PURPOSE OF SLA NOTIFICATION._" in comment_text:
+            ignore_comment = True
+
+        if not ignore_comment:    
+            if comment_text.startswith("_commented by "):
+                comment_text = ''.join(comment_text.splitlines(keepends=True)[1:])
+
+            comment_author = comment["author"]["displayName"]
+            comment_date = datetime.strptime(comment["created"][:19], "%Y-%m-%dT%H:%M:%S")
+            if comment_author == customer:
+                comments.append({
+                    "text":        comment_text,
+                    "date":        comment_date,
+                    "author":      comment_author,
+                    "author_type": "customer",
+                })
+            else:
+                comments.append({
+                    "text":        comment_text,
+                    "date":        comment_date,
+                    "author":      comment_author,
+                    "author_type": "agent",
+                })
     return comments
 
 
