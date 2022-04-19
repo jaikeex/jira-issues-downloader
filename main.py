@@ -1,7 +1,9 @@
+import os
 import requests
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
 import pandas as pd
+
 
 request_params = {
     "url": "https://jira.ixperta.com",
@@ -9,6 +11,7 @@ request_params = {
     "password": "",
     "issue_keys": []
 }
+
 
 data = {
     "Issue": [],
@@ -22,9 +25,7 @@ data = {
 def main():
     df = pd.DataFrame(data)
     dfm = get_data_from_jira(df)
-
-    dfm.to_excel("./output.xlsx")
-
+    dfm.to_excel(os.path.join(str(os.getcwd()), "output.xlsx"))
 
 def get_data_from_jira(dataframe):
     # customers = {"Remote JIRA Sync User (J2J)"}  -- for fleetcor issues
