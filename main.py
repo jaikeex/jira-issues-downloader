@@ -1,5 +1,3 @@
-from os import link
-from re import T
 import requests
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
@@ -20,40 +18,49 @@ data = {
     "Author": []
 }
 
+
+def main():
+    df = pd.DataFrame(data)
+    dfm = get_data_from_jira(df)
+
+    dfm.to_excel("./output.xlsx")
+
+
 def get_data_from_jira(dataframe):
-    customers = {"Remote JIRA Sync User (J2J)"}
-    issue_keys = {""}
+    # customers = {"Remote JIRA Sync User (J2J)"}  -- for fleetcor issues
+    customers = {""} 
 
     get_user_input()
 
     basic = HTTPBasicAuth(request_params["username"], request_params["password"])
     for issue_key in request_params["issue_keys"]:
+        print(f"Processing Issue key={issue_key}.")
         issue_url = request_params["url"] + "/browse/" + issue_key
         link = f'=HYPERLINK("{issue_url}", "{issue_key}")'
 
-        issue_keys.add(issue_key)
         issue = get_issue_json(basic, issue_key)
 
         date = datetime.strptime(issue["fields"]["created"][:19], "%Y-%m-%dT%H:%M:%S")
         summary = issue["fields"]["summary"]
         description = issue["fields"]["description"]
-        all_comments = issue["fields"]["comment"]["comments"]
 
         customer = issue["fields"]["reporter"]["displayName"]
         customers.add(customer)
 
+        all_comments = issue["fields"]["comment"]["comments"]
         comments = get_comments(all_comments, customer)
 
         dataframe = add_summary(customer, dataframe, date, link, summary)
         dataframe = add_description(customer, dataframe, date, description, link)
         dataframe = add_comments(comments, dataframe, link)
 
-    dataframe = apply_styling(dataframe, customers=customers, issue_keys=issue_keys)
+    dataframe = apply_styling(dataframe, customers=customers, issue_keys=request_params["issue_keys"])
 
     return dataframe
 
 
 def apply_styling(dataframe, customers, issue_keys):
+    print("Applying styling to the dataframe.")
     dataframe = dataframe.reset_index()
     dataframe = dataframe.style.apply(
         df_summary_background_style,
@@ -110,20 +117,9 @@ def get_comments(all_comments, customer):
         comment_text = comment["body"]
         comment_id = comment["id"]
 
-        basic = HTTPBasicAuth(request_params["username"], request_params["password"])
-        url = request_params["url"] + "/rest/api/2/comment/" + comment_id + "/properties/sd.public.comment"
-        response = requests.get(url, auth=basic)
-        visibility = response.json()
-        print(url)
-        print(visibility)
+        print(f"Processing comment id={comment_id}")
 
-        ignore_comment = False
-
-        if "value" in visibility:
-            if visibility["value"]["internal"] == True: 
-                ignore_comment = True
-        if "_THIS IS AN INTERNAL IXPERTA COMMENT FOR PURPOSE OF SLA NOTIFICATION._" in comment_text:
-            ignore_comment = True
+        ignore_comment = get_ignore_comment(comment_text, comment_id)
 
         if not ignore_comment:    
             if comment_text.startswith("_commented by "):
@@ -148,17 +144,32 @@ def get_comments(all_comments, customer):
     return comments
 
 
+def get_ignore_comment(comment_text, comment_id):
+    basic = HTTPBasicAuth(request_params["username"], request_params["password"])
+
+    url = request_params["url"] + "/rest/api/2/comment/" + comment_id + "/properties/sd.public.comment"
+    response = requests.get(url, auth=basic)
+    visibility = response.json()
+
+    ignore_comment = False
+
+    if "value" in visibility:
+        if visibility["value"]["internal"] == True: 
+            ignore_comment = True
+            print(f"Comment id={comment_id} is marked as internal. It will be skipped.")
+    if "_THIS IS AN INTERNAL IXPERTA COMMENT FOR PURPOSE OF SLA NOTIFICATION._" in comment_text:
+        ignore_comment = True
+        print(f"Comment id={comment_id} is an automatic SLA announcement. It will be skipped.")
+    return ignore_comment
+
+
 def get_issue_json(basic, issue_key):
+    print(f"Sending request to {request_params['url']}.")
     url = request_params["url"] + "/rest/api/2/issue/" + issue_key
     response = requests.get(url, auth=basic)
     issue = response.json()
+    print(f"Request was successful.")
     return issue
-
-
-def main():
-    df = pd.DataFrame(data)
-    dfm = get_data_from_jira(df)
-    dfm.to_excel("d:/output.xlsx")
 
 
 def get_user_input():
@@ -179,6 +190,7 @@ def get_user_input():
 def df_link_style(val):
     return "color: blue"
 
+
 def df_link_style_un(val):
     return "text-decoration: underline"
 
@@ -191,6 +203,7 @@ def df_summary_background_style(val, target, column):
     is_summary = pd.Series(data=False, index=val.index)
     is_summary[column] = val.loc[column] == target
     return ['background-color: orange' if is_summary.any() else '' for v in is_summary]
+
 
 if __name__ == '__main__':
     main()
