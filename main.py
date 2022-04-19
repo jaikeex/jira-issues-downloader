@@ -23,11 +23,14 @@ data = {
 
 
 def main():
+    print("Starting...")
     warnings.simplefilter(action='ignore', category=FutureWarning)
+    filepath = os.path.join(str(os.getcwd()), "output.xlsx")
 
     df = pd.DataFrame(data)
     dfm = get_data_from_jira(df)
-    dfm.to_excel(os.path.join(str(os.getcwd()), "output.xlsx"))
+    dfm.to_excel(filepath)
+    print(f"Success! File can be found at {filepath}")
 
 def get_data_from_jira(dataframe):
     # customers = {"Remote JIRA Sync User (J2J)"}  -- for fleetcor issues
