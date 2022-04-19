@@ -3,7 +3,7 @@ import requests
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
 import pandas as pd
-
+import warnings
 
 request_params = {
     "url": "https://jira.ixperta.com",
@@ -23,6 +23,8 @@ data = {
 
 
 def main():
+    warnings.simplefilter(action='ignore', category=FutureWarning)
+
     df = pd.DataFrame(data)
     dfm = get_data_from_jira(df)
     dfm.to_excel(os.path.join(str(os.getcwd()), "output.xlsx"))
