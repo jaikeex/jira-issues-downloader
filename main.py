@@ -9,8 +9,14 @@ request_params = {
     "url": "https://jira.ixperta.com",
     "username": "",
     "password": "",
-    "issue_keys": []
+    "issue_keys": [],
+    "ignore_internal_comments": True
 }
+
+
+invalidating_text_snippets = [
+    "_THIS IS AN INTERNAL IXPERTA COMMENT FOR PURPOSE OF SLA NOTIFICATION._"
+]
 
 
 data = {
@@ -22,50 +28,65 @@ data = {
 }
 
 
+dataframe = pd.DataFrame(data)
+
+
 def main():
     print("Starting...")
     warnings.simplefilter(action='ignore', category=FutureWarning)
     filepath = os.path.join(str(os.getcwd()), "output.xlsx")
 
-    df = pd.DataFrame(data)
-    dfm = get_data_from_jira(df)
+    dfm = get_final_dataframe()
     dfm.to_excel(filepath)
+
     print(f"Success! File can be found at {filepath}")
 
-def get_data_from_jira(dataframe):
+
+def get_final_dataframe():
     # customers = {"Remote JIRA Sync User (J2J)"}  -- for fleetcor issues
     customers = {""} 
 
     get_user_input()
 
-    basic = HTTPBasicAuth(request_params["username"], request_params["password"])
     for issue_key in request_params["issue_keys"]:
         print(f"Processing Issue key={issue_key}.")
-        issue_url = request_params["url"] + "/browse/" + issue_key
-        link = f'=HYPERLINK("{issue_url}", "{issue_key}")'
 
-        issue = get_issue_json(basic, issue_key)
+        issue_data = get_issue_data_from_jira(issue_key)
 
-        date = datetime.strptime(issue["fields"]["created"][:19], "%Y-%m-%dT%H:%M:%S")
-        summary = issue["fields"]["summary"]
-        description = issue["fields"]["description"]
+        customers.add(issue_data["customer"])
+        comments = get_comments(issue_data["comments"], issue_data["customer"])
 
-        customer = issue["fields"]["reporter"]["displayName"]
-        customers.add(customer)
+        dataframe = add_summary(issue_data, dataframe)
+        dataframe = add_description(issue_data, dataframe)
+        dataframe = add_comments(issue_data, dataframe, comments)
 
-        all_comments = issue["fields"]["comment"]["comments"]
-        comments = get_comments(all_comments, customer)
-
-        dataframe = add_summary(customer, dataframe, date, link, summary)
-        dataframe = add_description(customer, dataframe, date, description, link)
-        dataframe = add_comments(comments, dataframe, link)
-
-    dataframe = apply_styling(dataframe, customers=customers, issue_keys=request_params["issue_keys"])
-
+    dataframe = apply_styling(customers=customers, issue_keys=request_params["issue_keys"])
     return dataframe
 
 
-def apply_styling(dataframe, customers, issue_keys):
+def get_issue_data_from_jira(issue_key):
+    issue_url = request_params["url"] + "/browse/" + issue_key
+    url = request_params["url"] + "/rest/api/2/issue/" + issue_key
+
+    issue = get_request(url)
+    issue_data = parse_issue(issue_key, issue_url, issue)
+    return issue_data
+
+
+def parse_issue(issue_key, issue_url, issue):
+    issue_data = {
+            "excel_link": f'=HYPERLINK("{issue_url}", "{issue_key}")',
+            "date": datetime.strptime(issue["fields"]["created"][:19], "%Y-%m-%dT%H:%M:%S"),
+            "summary": issue["fields"]["summary"],
+            "description": issue["fields"]["description"],
+            "customer": issue["fields"]["reporter"]["displayName"],
+            "comments": issue["fields"]["comment"]["comments"]
+        }
+    
+    return issue_data
+
+
+def apply_styling(customers, issue_keys):
     print("Applying styling to the dataframe.")
     dataframe = dataframe.reset_index()
     dataframe = dataframe.style.apply(
@@ -79,10 +100,10 @@ def apply_styling(dataframe, customers, issue_keys):
     return dataframe
 
 
-def add_comments(comments, dataframe, link):
+def add_comments(issue_data, comments):
     for comment in comments:
         comment_row = {
-            "Issue":     link,
+            "Issue":     issue_data["excel_link"],
             "Text_Type": "comment",
             "Text":      comment["text"],
             "Date":      comment["date"],
@@ -93,25 +114,25 @@ def add_comments(comments, dataframe, link):
     return dataframe
 
 
-def add_description(customer, dataframe, date, description, issue_key):
+def add_description(issue_data):
     description_row = {
-        "Issue":     issue_key,
+        "Issue":     issue_data["excel_link"],
         "Text_Type": "description",
-        "Text":      description,
-        "Date":      date,
-        "Author":    customer
+        "Text":      issue_data["description"],
+        "Date":      issue_data["date"],
+        "Author":    issue_data["customer"]
     }
     dataframe = dataframe.append(description_row, ignore_index=True)
     return dataframe
 
 
-def add_summary(customer, dataframe, date, issue_key, summary):
+def add_summary(issue_data):
     summary_row = {
-        "Issue":     issue_key,
+        "Issue":     issue_data["excel_link"],
         "Text_Type": "summary",
-        "Text":      summary,
-        "Date":      date,
-        "Author":    customer
+        "Text":      issue_data["summary"],
+        "Date":      issue_data["date"],
+        "Author":    issue_data["customer"]
     }
     dataframe = dataframe.append(summary_row, ignore_index=True)
     return dataframe
@@ -120,62 +141,74 @@ def add_summary(customer, dataframe, date, issue_key, summary):
 def get_comments(all_comments, customer):
     comments = []
     for comment in all_comments:
-        comment_text = comment["body"]
-        comment_id = comment["id"]
+        comment_data = parse_comment(comment)
+        print(f"Processing comment id={comment_data['id']}")
 
-        print(f"Processing comment id={comment_id}")
+        ignored_comment = is_ignored_comment(comment_data["text"], comment_data["id"])
 
-        ignore_comment = get_ignore_comment(comment_text, comment_id)
+        if not ignored_comment:    
+            format_comment_body(comment_data)
+            add_comment_to_list_of_all_comments(customer, comments, comment_data)
 
-        if not ignore_comment:    
-            if comment_text.startswith("_commented by "):
-                comment_text = ''.join(comment_text.splitlines(keepends=True)[1:])
-
-            comment_author = comment["author"]["displayName"]
-            comment_date = datetime.strptime(comment["created"][:19], "%Y-%m-%dT%H:%M:%S")
-            if comment_author == customer:
-                comments.append({
-                    "text":        comment_text,
-                    "date":        comment_date,
-                    "author":      comment_author,
-                    "author_type": "customer",
-                })
-            else:
-                comments.append({
-                    "text":        comment_text,
-                    "date":        comment_date,
-                    "author":      comment_author,
-                    "author_type": "agent",
-                })
     return comments
 
 
-def get_ignore_comment(comment_text, comment_id):
-    basic = HTTPBasicAuth(request_params["username"], request_params["password"])
+def format_comment_body(comment_data):
+    if comment_data["text"].startswith("_commented by "):
+        comment_data["text"] = ''.join(comment_data["text"].splitlines(keepends=True)[1:])
 
+
+def parse_comment(comment):
+    comment_data = {
+            "text": comment["body"],
+            "id": comment["id"],
+            "date": datetime.strptime(comment["created"][:19], "%Y-%m-%dT%H:%M:%S"),
+            "author": comment["author"]["displayName"]
+        }
+    
+    return comment_data
+
+
+def add_comment_to_list_of_all_comments(customer, comments, comment_data):
+    if comment_data["author"] == customer:
+        comments.append({
+            "text":        comment_data["text"],
+            "date":        comment_data["date"],
+            "author":      comment_data["author"],
+            "author_type": "customer",
+        })
+    else:
+        comments.append({
+            "text":        comment_data["text"],
+            "date":        comment_data["date"],
+            "author":      comment_data["author"],
+            "author_type": "agent",
+        })
+
+
+def is_ignored_comment(comment_text, comment_id):
     url = request_params["url"] + "/rest/api/2/comment/" + comment_id + "/properties/sd.public.comment"
-    response = requests.get(url, auth=basic)
-    visibility = response.json()
+    visibility = get_request(url)
 
     ignore_comment = False
 
-    if "value" in visibility:
+    if "value" in visibility and request_params["ignore_internal_comments"]:
         if visibility["value"]["internal"] == True: 
             ignore_comment = True
             print(f"Comment id={comment_id} is marked as internal. It will be skipped.")
-    if "_THIS IS AN INTERNAL IXPERTA COMMENT FOR PURPOSE OF SLA NOTIFICATION._" in comment_text:
-        ignore_comment = True
-        print(f"Comment id={comment_id} is an automatic SLA announcement. It will be skipped.")
+
+    for invalidating_text in invalidating_text_snippets:
+        if invalidating_text in comment_text:
+            ignore_comment = True
+            print(f"Comment id={comment_id} contains {invalidating_text}, marking it as inavalid. It will be skipped.")
+
     return ignore_comment
 
 
-def get_issue_json(basic, issue_key):
-    print(f"Sending request to {request_params['url']}.")
-    url = request_params["url"] + "/rest/api/2/issue/" + issue_key
+def get_request(url):
+    basic = HTTPBasicAuth(request_params["username"], request_params["password"])
     response = requests.get(url, auth=basic)
-    issue = response.json()
-    print(f"Request was successful.")
-    return issue
+    return response.json()
 
 
 def get_user_input():
