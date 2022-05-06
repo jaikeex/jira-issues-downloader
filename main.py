@@ -28,21 +28,20 @@ data = {
 }
 
 
-dataframe = pd.DataFrame(data)
-
-
 def main():
     print("Starting...")
     warnings.simplefilter(action='ignore', category=FutureWarning)
     filepath = os.path.join(str(os.getcwd()), "output.xlsx")
 
-    dfm = get_final_dataframe()
+    dataframe = pd.DataFrame(data)
+
+    dfm = get_final_dataframe(dataframe)
     dfm.to_excel(filepath)
 
     print(f"Success! File can be found at {filepath}")
 
 
-def get_final_dataframe():
+def get_final_dataframe(dataframe):
     # customers = {"Remote JIRA Sync User (J2J)"}  -- for fleetcor issues
     customers = {""} 
 
@@ -58,9 +57,9 @@ def get_final_dataframe():
 
         dataframe = add_summary(issue_data, dataframe)
         dataframe = add_description(issue_data, dataframe)
-        dataframe = add_comments(issue_data, dataframe, comments)
+        dataframe = add_comments(issue_data, comments, dataframe)
 
-    dataframe = apply_styling(customers=customers, issue_keys=request_params["issue_keys"])
+    dataframe = apply_styling(customers=customers, issue_keys=request_params["issue_keys"], dataframe=dataframe)
     return dataframe
 
 
@@ -86,7 +85,7 @@ def parse_issue(issue_key, issue_url, issue):
     return issue_data
 
 
-def apply_styling(customers, issue_keys):
+def apply_styling(customers, issue_keys, dataframe):
     print("Applying styling to the dataframe.")
     dataframe = dataframe.reset_index()
     dataframe = dataframe.style.apply(
@@ -100,7 +99,7 @@ def apply_styling(customers, issue_keys):
     return dataframe
 
 
-def add_comments(issue_data, comments):
+def add_comments(issue_data, comments, dataframe):
     for comment in comments:
         comment_row = {
             "Issue":     issue_data["excel_link"],
@@ -114,7 +113,7 @@ def add_comments(issue_data, comments):
     return dataframe
 
 
-def add_description(issue_data):
+def add_description(issue_data, dataframe):
     description_row = {
         "Issue":     issue_data["excel_link"],
         "Text_Type": "description",
@@ -126,7 +125,7 @@ def add_description(issue_data):
     return dataframe
 
 
-def add_summary(issue_data):
+def add_summary(issue_data, dataframe):
     summary_row = {
         "Issue":     issue_data["excel_link"],
         "Text_Type": "summary",
